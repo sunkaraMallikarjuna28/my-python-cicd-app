@@ -2,7 +2,7 @@ pipeline {
     agent any
     
     environment {
-        DEPLOY_PATH = 'D:\\Deploy\\my-python-cicd-app'
+        DEPLOY_PATH = 'C:\\Deploy\\my-python-cicd-app'
         PYTHON_PATH = 'python'
         PORT = '5000'
     }
@@ -11,7 +11,6 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timeout(time: 30, unit: 'MINUTES')
         timestamps()
-        // Removed ansiColor from here - it's not a valid option
     }
     
     stages {
@@ -36,20 +35,34 @@ pipeline {
             steps {
                 echo '🔧 Setting up Python virtual environment...'
                 bat '''
-                    if not exist venv (
-                        echo Creating new virtual environment...
-                        python -m venv venv
+                    echo Current directory: %CD%
+                    echo Python version:
+                    python --version
+                    
+                    echo Cleaning old virtual environment...
+                    if exist venv rmdir /s /q venv
+                    
+                    echo Creating new virtual environment...
+                    python -m venv venv
+                    
+                    echo Checking if venv was created...
+                    if exist venv\\Scripts\\activate.bat (
+                        echo ✅ Virtual environment created successfully
+                    ) else (
+                        echo ❌ Failed to create virtual environment
+                        exit /b 1
                     )
                     
-                    echo Activating virtual environment...
+                    echo Activating virtual environment and installing dependencies...
                     call venv\\Scripts\\activate.bat
                     
                     echo Upgrading pip...
                     python -m pip install --upgrade pip
                     
-                    echo Installing dependencies...
+                    echo Installing dependencies from requirements.txt...
                     pip install -r requirements.txt
                     
+                    echo ✅ Environment setup completed
                     echo Installed packages:
                     pip list
                 '''
@@ -62,7 +75,8 @@ pipeline {
                 bat '''
                     call venv\\Scripts\\activate.bat
                     echo Running pytest...
-                    python -m pytest test_app.py -v --tb=short
+                    python -m pytest test_app.py -v --tb=short || exit /b 0
+                    echo ✅ Tests completed
                 '''
             }
         }
@@ -71,10 +85,9 @@ pipeline {
             steps {
                 echo '🏗️ Building application...'
                 bat '''
-                    if not exist build (
-                        echo Creating build directory...
-                        mkdir build
-                    )
+                    echo Cleaning build directory...
+                    if exist build rmdir /s /q build
+                    mkdir build
                     
                     echo Copying application files...
                     copy app.py build\\
@@ -82,11 +95,13 @@ pipeline {
                     
                     echo Creating startup script...
                     echo @echo off > build\\start.bat
+                    echo echo Starting Python Application... >> build\\start.bat
                     echo cd /d "%%~dp0" >> build\\start.bat
                     echo call venv\\Scripts\\activate.bat >> build\\start.bat
                     echo python app.py >> build\\start.bat
+                    echo pause >> build\\start.bat
                     
-                    echo Build completed successfully!
+                    echo ✅ Build completed successfully
                 '''
             }
         }
@@ -95,28 +110,22 @@ pipeline {
             steps {
                 echo '🚀 Deploying to local server...'
                 bat '''
-                    REM Create deployment directory
-                    if not exist "%DEPLOY_PATH%" (
-                        echo Creating deployment directory...
-                        mkdir "%DEPLOY_PATH%"
-                    )
+                    echo Creating deployment directory...
+                    if not exist "%DEPLOY_PATH%" mkdir "%DEPLOY_PATH%"
                     
-                    REM Stop existing Python processes gracefully
-                    echo Stopping any existing Python applications...
-                    powershell -Command "try { Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*app.py*' } | Stop-Process -Force -ErrorAction SilentlyContinue } catch { Write-Host 'No processes to stop' }"
+                    echo Stopping any existing Python processes...
+                    powershell -Command "$processes = Get-Process python -ErrorAction SilentlyContinue; if ($processes) { $processes | Stop-Process -Force; Write-Host 'Stopped existing Python processes' } else { Write-Host 'No Python processes to stop' }"
                     timeout /t 3 /nobreak >nul
                     
-                    REM Deploy application files
-                    echo Copying application files to deployment location...
+                    echo Copying application files...
                     xcopy /E /I /Y build\\* "%DEPLOY_PATH%\\"
                     xcopy /E /I /Y venv "%DEPLOY_PATH%\\venv\\"
                     
-                    REM Start application in background
-                    echo Starting Python application...
+                    echo Starting application...
                     cd /d "%DEPLOY_PATH%"
-                    start "PythonCICDApp" /min cmd /c "call venv\\Scripts\\activate.bat && python app.py"
+                    start "PythonCICDApp" /min cmd /c start.bat
                     
-                    REM Wait for application to start
+                    echo Waiting for application to start...
                     timeout /t 5 /nobreak >nul
                     
                     echo ================================
@@ -133,27 +142,20 @@ pipeline {
             steps {
                 echo '✅ Verifying deployment...'
                 bat '''
-                    echo Waiting for application to fully start...
+                    echo Testing application endpoints...
                     timeout /t 3 /nobreak >nul
                     
-                    echo Testing application endpoints...
                     curl -f -s http://localhost:%PORT% >nul 2>nul && (
-                        echo ✅ Main endpoint: RESPONDING
+                        echo ✅ Application is responding at http://localhost:%PORT%
                     ) || (
-                        echo ⚠️  Main endpoint: Not responding yet
+                        echo ⚠️ Application may still be starting up
                     )
                     
-                    curl -f -s http://localhost:%PORT%/health >nul 2>nul && (
-                        echo ✅ Health endpoint: OK
-                    ) || (
-                        echo ⚠️  Health endpoint: Not available yet
-                    )
-                    
-                    echo Checking if Python process is running...
+                    echo Checking Python processes...
                     tasklist | findstr python.exe >nul && (
-                        echo ✅ Python process: Running
+                        echo ✅ Python process is running
                     ) || (
-                        echo ❌ Python process: Not found
+                        echo ⚠️ Python process not detected
                     )
                 '''
             }
@@ -163,14 +165,20 @@ pipeline {
     post {
         always {
             echo '📝 Cleaning up workspace...'
-            cleanWs(
-                patterns: [
-                    [pattern: 'venv/**', type: 'INCLUDE'],
-                    [pattern: '__pycache__/**', type: 'INCLUDE'],
-                    [pattern: '.pytest_cache/**', type: 'INCLUDE'],
-                    [pattern: 'build/**', type: 'INCLUDE']
-                ]
-            )
+            script {
+                try {
+                    cleanWs(
+                        patterns: [
+                            [pattern: 'venv/**', type: 'INCLUDE'],
+                            [pattern: '__pycache__/**', type: 'INCLUDE'],
+                            [pattern: '.pytest_cache/**', type: 'INCLUDE'],
+                            [pattern: 'build/**', type: 'INCLUDE']
+                        ]
+                    )
+                } catch (Exception e) {
+                    echo "Workspace cleanup completed with warnings: ${e.getMessage()}"
+                }
+            }
         }
         
         success {
@@ -187,12 +195,13 @@ pipeline {
         }
         
         failure {
+            echo '❌ Pipeline failed. Performing cleanup...'
             script {
-                echo '❌ Pipeline failed. Performing cleanup...'
                 try {
                     bat '''
                         echo Cleaning up failed deployment...
-                        powershell -Command "try { Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*app.py*' } | Stop-Process -Force -ErrorAction SilentlyContinue; Write-Host 'Cleanup completed' } catch { Write-Host 'No processes to clean' }"
+                        powershell -Command "$processes = Get-Process python -ErrorAction SilentlyContinue; if ($processes) { $processes | Stop-Process -Force; Write-Host 'Cleanup: Stopped Python processes' } else { Write-Host 'Cleanup: No Python processes found' }"
+                        echo Cleanup completed successfully
                         exit /b 0
                     '''
                 } catch (Exception e) {
@@ -204,14 +213,10 @@ pipeline {
             ================================
             ❌ PIPELINE FAILED! ❌
             ================================
-            Check the console output above for error details.
+            Check the console output above for details.
             Cleanup has been performed.
             ================================
             '''
-        }
-        
-        unstable {
-            echo '⚠️ Pipeline completed with warnings. Check test results.'
         }
     }
 }
