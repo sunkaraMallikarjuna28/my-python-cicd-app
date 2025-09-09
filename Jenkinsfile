@@ -2,7 +2,7 @@ pipeline {
     agent any
     
     environment {
-        DEPLOY_PATH = 'C:\\Deploy\\my-python-cicd-app'
+        DEPLOY_PATH = 'D:\\Deploy\\my-python-cicd-app'
         PYTHON_PATH = 'python'
         PORT = '5000'
     }
