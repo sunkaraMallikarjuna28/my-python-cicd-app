@@ -107,37 +107,46 @@ pipeline {
         }
         
         stage('🚀 Deploy Application') {
-            steps {
-                echo '🚀 Deploying to local server...'
-                bat '''
-                    echo Creating deployment directory...
-                    if not exist "%DEPLOY_PATH%" mkdir "%DEPLOY_PATH%"
-                    
-                    echo Stopping any existing Python processes...
-                    powershell -Command "$processes = Get-Process python -ErrorAction SilentlyContinue; if ($processes) { $processes | Stop-Process -Force; Write-Host 'Stopped existing Python processes' } else { Write-Host 'No Python processes to stop' }"
-                    timeout /t 3 /nobreak >nul
-                    
-                    echo Copying application files...
-                    xcopy /E /I /Y build\\* "%DEPLOY_PATH%\\"
-                    xcopy /E /I /Y venv "%DEPLOY_PATH%\\venv\\"
-                    
-                    echo Starting application...
-                    cd /d "%DEPLOY_PATH%"
-                    start "PythonCICDApp" /min cmd /c start.bat
-                    
-                    echo Waiting for application to start...
-                    timeout /t 5 /nobreak >nul
-                    
-                    echo ================================
-                    echo DEPLOYMENT COMPLETED
-                    echo ================================
-                    echo Application URL: http://localhost:%PORT%
-                    echo Deployment Path: %DEPLOY_PATH%
-                    echo ================================
-                '''
-            }
+    steps {
+        echo '🚀 Deploying to local server...'
+        bat '''
+            REM Create deployment directory
+            if not exist "%DEPLOY_PATH%" (
+                echo Creating deployment directory...
+                mkdir "%DEPLOY_PATH%"
+            )
+            
+            REM Stop existing Python processes
+            echo Stopping any existing Python processes...
+            powershell -Command "$processes = Get-Process python -ErrorAction SilentlyContinue; if ($processes) { $processes | Stop-Process -Force; Write-Host 'Stopped existing Python processes' } else { Write-Host 'No Python processes to stop' }"
+            
+            REM Wait a moment (Jenkins-compatible way)
+            ping 127.0.0.1 -n 4 >nul
+            
+            REM Deploy application files
+            echo Copying application files...
+            xcopy /E /I /Y build\\* "%DEPLOY_PATH%\\"
+            xcopy /E /I /Y venv "%DEPLOY_PATH%\\venv\\"
+            
+            REM Start application
+            echo Starting Python application...
+            cd /d "%DEPLOY_PATH%"
+            start "PythonCICDApp" /min cmd /c start.bat
+            
+            REM Wait for application to start (Jenkins-compatible)
+            echo Waiting for application to start...
+            ping 127.0.0.1 -n 6 >nul
+            
+            echo ================================
+            echo DEPLOYMENT COMPLETED
+            echo ================================
+            echo Application URL: http://localhost:%PORT%
+            echo Deployment Path: %DEPLOY_PATH%
+            echo ================================
+        '''
         }
-        
+        }
+
         stage('✅ Verify Deployment') {
             steps {
                 echo '✅ Verifying deployment...'
